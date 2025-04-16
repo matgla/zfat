@@ -132,37 +132,127 @@ pub fn build(b: *std.Build) void {
         break :blk config;
     };
 
+    const config_header = b.addConfigHeader(.{
+        .style = .blank,
+        .include_path = "ffconf.h",
+    }, .{
+        .FFCONF_DEF = 5380,
+    });
+
+    switch (config.volumes) {
+        .count => |count| {
+            config_header.addValues(.{
+                .FF_VOLUMES = count,
+                .FF_STR_VOLUME_ID = 0,
+            });
+        },
+        .named => |strings| {
+            var list = std.ArrayList(u8).init(b.allocator);
+            for (strings) |name| {
+                if (list.items.len > 0) {
+                    list.appendSlice(", ") catch @panic("out of memory");
+                }
+                list.writer().print("\"{}\"", .{
+                    std.fmt.fmtSliceHexUpper(name),
+                }) catch @panic("out of memory");
+            }
+            config_header.addValues(.{
+                .FF_VOLUMES = @as(i64, @intCast(strings.len)),
+                .FF_STR_VOLUME_ID = 1,
+                .FF_VOLUME_STRS = list.items,
+            });
+        },
+    }
+
+    switch (config.sector_size) {
+        .static => |size| {
+            config_header.addValues(.{
+                .FF_MIN_SS = size,
+                .FF_MAX_SS = size,
+            });
+        },
+        .dynamic => |range| {
+            config_header.addValues(.{
+                .FF_MIN_SS = range.minimum,
+                .FF_MAX_SS = range.maximum,
+            });
+        },
+    }
+
+    inline for (comptime std.meta.fields(Config)) |fld| {
+        add_config_field(config_header, config, fld.name);
+    }
+
+    switch (config.rtc) {
+        .dynamic => {
+            config_header.addValue("FF_FS_NORTC", bool, false);
+        },
+        .static => |date| {
+            config_header.addValues(.{
+                .FF_FS_NORTC = 1,
+                .FF_NORTC_MON = date.month.numeric(),
+                .FF_NORTC_MDAY = date.day,
+                .FF_NORTC_YEAR = date.year,
+            });
+        },
+    }
+
     // module:
+    const upstream = b.dependency("fatfs", .{});
 
     const mod_options = b.addOptions();
     mod_options.addOption(bool, "has_rtc", (config.rtc != .static));
 
-    const zfat_lib = b.addStaticLibrary(.{
-        .name = "zfat",
+    // create copy of the upstream without ffconf.h
+    const upstream_copy = b.addWriteFiles();
+    _ = upstream_copy.addCopyFile(upstream.path("source/ff.c"), "ff.c");
+    _ = upstream_copy.addCopyFile(upstream.path("source/ff.h"), "ff.h");
+    _ = upstream_copy.addCopyFile(upstream.path("source/diskio.h"), "diskio.h");
+    _ = upstream_copy.addCopyFile(upstream.path("source/ffunicode.c"), "ffunicode.c");
+    _ = upstream_copy.addCopyFile(upstream.path("source/ffsystem.c"), "ffsystem.c");
+    const upstream_copy_dir = upstream_copy.getDirectory();
+
+    const zfat_lib_mod = b.createModule(.{
         .target = target,
         .optimize = optimize,
+        .link_libc = link_libc,
     });
-    zfat_lib.installHeader(b.path("src/fatfs/ff.h"), "ff.h");
-    zfat_lib.installHeader(b.path("src/fatfs/diskio.h"), "diskio.h");
-    initialize_mod(b, zfat_lib.root_module, config, link_libc);
+    zfat_lib_mod.addCSourceFiles(.{
+        .root = upstream_copy_dir,
+
+        .files = &.{
+            "ff.c",
+            "ffunicode.c",
+            "ffsystem.c",
+        },
+        .flags = &.{"-std=c99"},
+    });
+    zfat_lib_mod.addConfigHeader(config_header);
+
+    const zfat = b.addLibrary(.{
+        .linkage = .static,
+        .name = "zfat",
+        .root_module = zfat_lib_mod,
+    });
+    zfat.installHeader(upstream_copy_dir.path(b, "ff.h"), "ff.h");
+    zfat.installHeader(upstream_copy_dir.path(b, "diskio.h"), "diskio.h");
+    zfat.installConfigHeader(config_header);
 
     const zfat_mod = b.addModule("zfat", .{
         .root_source_file = b.path("src/fatfs.zig"),
         .target = target,
         .optimize = optimize,
     });
-    initialize_mod(b, zfat_mod, config, link_libc);
+    zfat_mod.linkLibrary(zfat);
     zfat_mod.addOptions("config", mod_options);
 
     // usage demo:
-
     const exe = b.addExecutable(.{
         .name = "zfat-demo",
         .root_source_file = b.path("demo/main.zig"),
         .target = target,
         .optimize = optimize,
     });
-
     exe.root_module.addImport("zfat", zfat_mod);
 
     const demo_exe = b.addInstallArtifact(exe, .{});
@@ -178,101 +268,26 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 }
 
-fn initialize_mod(b: *std.Build, mod: *std.Build.Module, config: Config, link_libc: bool) void {
-    mod.addIncludePath(b.path("src/fatfs"));
-    mod.addCSourceFiles(.{
-        .root = b.path("src/fatfs"),
-        .files = &.{
-            "ff.c",
-            "ffunicode.c",
-            "ffsystem.c",
-        },
-        .flags = &.{"-std=c99"},
-    });
-    apply_public_config(b, mod, config);
-    apply_private_config(b, mod, config);
-    mod.link_libc = link_libc;
-}
-
-fn apply_public_config(b: *std.Build, module: *std.Build.Module, config: Config) void {
-    switch (config.volumes) {
-        .count => |count| {
-            module.addCMacro("FF_VOLUMES", b.fmt("{d}", .{count}));
-            module.addCMacro("FF_STR_VOLUME_ID", "0");
-        },
-        .named => |strings| {
-            var list = std.ArrayList(u8).init(b.allocator);
-            for (strings) |name| {
-                if (list.items.len > 0) {
-                    list.appendSlice(", ") catch @panic("out of memory");
-                }
-                list.writer().print("\"{}\"", .{
-                    std.fmt.fmtSliceHexUpper(name),
-                }) catch @panic("out of memory");
-            }
-
-            module.addCMacro("FF_VOLUMES", b.fmt("{d}", .{strings.len}));
-            module.addCMacro("FF_STR_VOLUME_ID", "1");
-            module.addCMacro("FF_VOLUME_STRS", list.items);
-        },
-    }
-
-    switch (config.sector_size) {
-        .static => |size| {
-            const str = b.fmt("{d}", .{@intFromEnum(size)});
-            module.addCMacro("FF_MIN_SS", str);
-            module.addCMacro("FF_MAX_SS", str);
-        },
-        .dynamic => |range| {
-            module.addCMacro("FF_MIN_SS", b.fmt("{d}", .{@intFromEnum(range.minimum)}));
-            module.addCMacro("FF_MAX_SS", b.fmt("{d}", .{@intFromEnum(range.maximum)}));
-        },
-    }
-}
-
-fn apply_private_config(b: *std.Build, module: *std.Build.Module, config: Config) void {
-    inline for (comptime std.meta.fields(Config)) |fld| {
-        add_config_field(b, module, config, fld.name);
-    }
-
-    switch (config.rtc) {
-        .dynamic => module.addCMacro("FF_FS_NORTC", "0"),
-        .static => |date| {
-            module.addCMacro("FF_FS_NORTC", "1");
-            module.addCMacro("FF_NORTC_MON", b.fmt("{d}", .{date.month.numeric()}));
-            module.addCMacro("FF_NORTC_MDAY", b.fmt("{d}", .{date.day}));
-            module.addCMacro("FF_NORTC_YEAR", b.fmt("{d}", .{date.year}));
-        },
-    }
-}
-
-fn add_config_field(b: *std.Build, module: *std.Build.Module, config: Config, comptime field_name: []const u8) void {
+fn add_config_field(config_header: *std.Build.Step.ConfigHeader, config: Config, comptime field_name: []const u8) void {
     const value = @field(config, field_name);
     const Type = @TypeOf(value);
     const type_info = @typeInfo(Type);
 
-    const str_value: []const u8 = if (Type == VolumeKind or Type == SectorSize or Type == RtcConfig)
+    if (Type == VolumeKind or Type == SectorSize or Type == RtcConfig)
         return // we don't emit these automatically
-    else if (type_info == .@"enum")
-        b.fmt("{d}", .{@intFromEnum(value)})
-    else if (type_info == .int)
-        b.fmt("{d}", .{value})
-    else if (Type == bool)
-        b.fmt("{d}", .{@intFromBool(value)})
-    else if (Type == []const u8)
-        value
-    else {
-        @compileError("Unsupported config type: " ++ @typeName(Type));
-    };
-
-    const macro_name = @field(macro_names, field_name);
-    module.addCMacro(macro_name, str_value);
+    else if (type_info == .@"enum") {
+        const macro_name = @field(macro_names, field_name);
+        config_header.addValue(macro_name, i64, @intFromEnum(value));
+    } else {
+        const macro_name = @field(macro_names, field_name);
+        config_header.addValue(macro_name, Type, value);
+    }
 }
 
 fn add_config_option(b: *std.Build, config: *Config, comptime field: @TypeOf(.tag), desc: []const u8) void {
     const T = std.meta.FieldType(Config, field);
-
-    @field(config, @tagName(field)) = b.option(T, @tagName(field), desc) orelse @field(config, @tagName(field));
+    if (b.option(T, @tagName(field), desc)) |value|
+        @field(config, @tagName(field)) = value;
 }
 
 pub const Config = struct {

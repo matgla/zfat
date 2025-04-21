@@ -202,6 +202,7 @@ pub fn main() !void {
     try zfat.mkdir("0:/build");
     try zfat.mkdir("0:/zig-out");
     try zfat.mkdir("0:/zig-out/bin");
+    try zfat.mkdir("0:/code");
     try zfat.mkdir("0:/code/library");
 
     try writeFile("0:/build/CMakeCache.txt", "dummy");

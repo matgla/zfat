@@ -9,7 +9,7 @@ const zfat = @import("zfat");
 var global_fs: [5]zfat.FileSystem = undefined;
 
 // requires pointer stability
-var ramdisks: [5]RamDisk = .{.{}} ** 5;
+var ramdisks = [1]RamDisk{.{}} ** 5;
 
 pub const std_options = std.Options{
     .log_level = .info,

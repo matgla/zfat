@@ -1,5 +1,6 @@
 .{
-    .name = "zfat-tests",
+    .name = .zfat_tests,
+    .fingerprint = 0x646075db3c5b2a,
     .version = "0.1.0",
     .paths = .{
         "op_tester.zig",

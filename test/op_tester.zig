@@ -9,7 +9,7 @@ const zfat = @import("zfat");
 var global_fs: [5]zfat.FileSystem = undefined;
 
 // requires pointer stability
-var ramdisks: [5]RamDisk = .{.{}} ** 5;
+var ramdisks = [1]RamDisk{.{}} ** 5;
 
 pub const std_options = std.Options{
     .log_level = .info,
@@ -202,6 +202,7 @@ pub fn main() !void {
     try zfat.mkdir("0:/build");
     try zfat.mkdir("0:/zig-out");
     try zfat.mkdir("0:/zig-out/bin");
+    try zfat.mkdir("0:/code");
     try zfat.mkdir("0:/code/library");
 
     try writeFile("0:/build/CMakeCache.txt", "dummy");

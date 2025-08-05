@@ -16,6 +16,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const link_libc = !(b.option(bool, "no-libc", "Prevents linking of libc by default") orelse false);
+    std.debug.print("Link libc: {}", .{link_libc});
 
     const config = blk: {
         var config = Config{};

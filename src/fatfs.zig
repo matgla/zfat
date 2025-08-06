@@ -542,7 +542,7 @@ pub const File = struct {
         return Reader{ .context = file };
     }
 
-    pub const Writer = std.io.Writer(*Self, WriteError.Error, write);
+    pub const Writer = std.io.GenericWriter(*Self, WriteError.Error, write);
     pub fn writer(file: *Self) Writer {
         return Writer{ .context = file };
     }

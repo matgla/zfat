@@ -110,20 +110,20 @@ pub fn build(b: *std.Build) void {
                 config.sector_size = .{
                     .dynamic = .{
                         .minimum = std.meta.stringToEnum(SectorOption, min) orelse bad_config(
-                            "Invalid value for -Dsector-size: '{}'",
-                            .{std.zig.fmtEscapes(sector_config)},
+                            "Invalid value for -Dsector-size: '{f}'",
+                            .{std.zig.fmtString(sector_config)},
                         ),
                         .maximum = std.meta.stringToEnum(SectorOption, max) orelse bad_config(
-                            "Invalid value for -Dsector-size: '{}'",
-                            .{std.zig.fmtEscapes(sector_config)},
+                            "Invalid value for -Dsector-size: '{f}'",
+                            .{std.zig.fmtString(sector_config)},
                         ),
                     },
                 };
             } else {
                 config.sector_size = .{
                     .static = std.meta.stringToEnum(SectorOption, sector_config) orelse bad_config(
-                        "Invalid value for -Dsector-size: '{}'",
-                        .{std.zig.fmtEscapes(sector_config)},
+                        "Invalid value for -Dsector-size: '{f}'",
+                        .{std.zig.fmtString(sector_config)},
                     ),
                 };
             }
@@ -153,8 +153,8 @@ pub fn build(b: *std.Build) void {
                 if (list.items.len > 0) {
                     list.appendSlice(", ") catch @panic("out of memory");
                 }
-                list.writer().print("\"{}\"", .{
-                    std.fmt.fmtSliceHexUpper(name),
+                list.writer().print("\"{X}\"", .{
+                    name,
                 }) catch @panic("out of memory");
             }
             config_header.addValues(.{
@@ -247,12 +247,16 @@ pub fn build(b: *std.Build) void {
     zfat_mod.linkLibrary(zfat);
     zfat_mod.addOptions("config", mod_options);
 
-    // usage demo:
-    const exe = b.addExecutable(.{
-        .name = "zfat-demo",
+    const demo_module = b.createModule(.{
         .root_source_file = b.path("demo/main.zig"),
         .target = target,
         .optimize = optimize,
+    });
+
+    // usage demo:
+    const exe = b.addExecutable(.{
+        .name = "zfat-demo",
+        .root_module = demo_module,
     });
     exe.root_module.addImport("zfat", zfat_mod);
 
@@ -286,7 +290,7 @@ fn add_config_field(config_header: *std.Build.Step.ConfigHeader, config: Config,
 }
 
 fn add_config_option(b: *std.Build, config: *Config, comptime field: @TypeOf(.tag), desc: []const u8) void {
-    const T = std.meta.FieldType(Config, field);
+    const T = @FieldType(Config, @tagName(field));
     if (b.option(T, @tagName(field), desc)) |value|
         @field(config, @tagName(field)) = value;
 }

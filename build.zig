@@ -92,11 +92,11 @@ pub fn build(b: *std.Build) void {
         }
 
         if (maybe_volume_names) |volume_names| {
-            var volumes = std.ArrayList([]const u8).init(b.allocator);
+            var volumes = std.ArrayList([]const u8).initCapacity(b.allocator, 1) catch @panic("out of memory");
 
             var iter = std.mem.splitScalar(u8, volume_names, ',');
             while (iter.next()) |name| {
-                volumes.append(name) catch @panic("out of memory");
+                volumes.append(b.allocator, name) catch @panic("out of memory");
             }
             config.volumes = .{ .named = volumes.items };
         }
@@ -148,12 +148,12 @@ pub fn build(b: *std.Build) void {
             });
         },
         .named => |strings| {
-            var list = std.ArrayList(u8).init(b.allocator);
+            var list = std.ArrayList(u8).initCapacity(b.allocator, 1) catch @panic("out of memory");
             for (strings) |name| {
                 if (list.items.len > 0) {
-                    list.appendSlice(", ") catch @panic("out of memory");
+                    list.appendSlice(b.allocator, ", ") catch @panic("out of memory");
                 }
-                list.writer().print("\"{X}\"", .{
+                list.writer(b.allocator).print("\"{X}\"", .{
                     name,
                 }) catch @panic("out of memory");
             }

@@ -1,7 +1,8 @@
 .{
     .name = .zfat,
     .fingerprint = 0x4212c7b5f54ad348,
-    .version = "0.16.0-dev.233+a0ec4e270",
+    .version = "0.16.0",
+    .minimum_zig_version = "0.16.0-dev.233+a0ec4e270",
     .dependencies = .{
         .fatfs = .{
             .url = "https://elm-chan.org/fsw/ff/arc/ff15a.zip",

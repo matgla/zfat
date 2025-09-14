@@ -16,7 +16,6 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const link_libc = !(b.option(bool, "no-libc", "Prevents linking of libc by default") orelse false);
-    std.debug.print("Link libc: {}", .{link_libc});
 
     const config = blk: {
         var config = Config{};
@@ -153,9 +152,10 @@ pub fn build(b: *std.Build) void {
                 if (list.items.len > 0) {
                     list.appendSlice(b.allocator, ", ") catch @panic("out of memory");
                 }
-                list.writer(b.allocator).print("\"{X}\"", .{
+                const fmtname = std.fmt.allocPrint(b.allocator, "\"{X}\"", .{
                     name,
                 }) catch @panic("out of memory");
+                list.appendSlice(b.allocator, fmtname) catch @panic("out of memory");
             }
             config_header.addValues(.{
                 .FF_VOLUMES = @as(i64, @intCast(strings.len)),

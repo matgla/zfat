@@ -68,7 +68,7 @@ pub fn build(b: *std.Build) void {
                 break :time RtcConfig{
                     .static = .{
                         .year = year,
-                        .month = std.meta.intToEnum(std.time.epoch.Month, month) catch break :time null,
+                        .month = std.enums.fromInt(std.time.epoch.Month, month) orelse break :time null,
                         .day = day,
                     },
                 };
@@ -180,8 +180,8 @@ pub fn build(b: *std.Build) void {
         },
     }
 
-    inline for (comptime std.meta.fields(Config)) |fld| {
-        add_config_field(config_header, config, fld.name);
+    inline for (comptime std.meta.fieldNames(Config)) |fld_name| {
+        add_config_field(config_header, config, fld_name);
     }
 
     switch (config.rtc) {
@@ -247,6 +247,17 @@ pub fn build(b: *std.Build) void {
     zfat_mod.linkLibrary(zfat);
     zfat_mod.addOptions("config", mod_options);
 
+    // Replaces the `@cImport` that used to sit at the top of src/fatfs.zig.
+    const fatfs_headers = b.addTranslateC(.{
+        .root_source_file = b.path("src/fatfs_c.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = link_libc,
+    });
+    fatfs_headers.addIncludePath(upstream_copy_dir);
+    fatfs_headers.addConfigHeader(config_header);
+    zfat_mod.addImport("fatfs_c", fatfs_headers.createModule());
+
     const demo_module = b.createModule(.{
         .root_source_file = b.path("demo/main.zig"),
         .target = target,
@@ -265,9 +276,8 @@ pub fn build(b: *std.Build) void {
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
+    // `b.args` is gone in Zig 0.17: `zig build -- <args>` is handled by the
+    // make phase, so build.zig no longer forwards them by hand.
 
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);

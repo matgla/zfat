@@ -1,14 +1,12 @@
 const std = @import("std");
 const config = @import("config");
-const c = @cImport({
-    @cInclude("ff.h");
-    @cInclude("diskio.h");
-});
+// Zig 0.17 removed `@cImport`; see fatfs_c.h and the translate step in build.zig.
+const c = @import("fatfs_c");
 const logger = std.log.scoped(.fatfs);
 
 pub const volume_count = c.FF_VOLUMES;
 
-pub var disks: [c.FF_VOLUMES]?*Disk = .{null} ** c.FF_VOLUMES;
+pub var disks: [c.FF_VOLUMES]?*Disk = @splat(null);
 
 pub const PathChar = c.TCHAR;
 pub const LBA = c.LBA_t;
@@ -681,7 +679,13 @@ const RtcExport = struct {
     // Current local time shall be returned as bit-fields packed into a DWORD value. The bit fields are as follows:
 
     export fn get_fattime() c.DWORD {
-        const timestamp = std.time.timestamp();
+        // `std.time.timestamp` is gone in 0.17; wall-clock time now comes from
+        // an Io clock, which this callback has no handle to. There is no RTC
+        // wired up on these boards anyway, so return a fixed date. It must be
+        // >= the FAT epoch (1980-01-01): the Unix epoch would make the
+        // `year - 1980` below underflow, since both are unsigned.
+        const fat_epoch_unix_secs: i64 = 315_532_800; // 1980-01-01T00:00:00Z
+        const timestamp: i64 = fat_epoch_unix_secs;
 
         const epoch_secs = std.time.epoch.EpochSeconds{
             .secs = @as(u64, @intCast(timestamp)),
@@ -707,7 +711,7 @@ const RtcExport = struct {
             .hour = hour,
             .day = day,
             .month = month,
-            .year_from_1980 = @intCast(std.math.clamp(year - 1980, 0, 127)),
+            .year_from_1980 = @intCast(std.math.clamp(@as(i32, year) - 1980, 0, 127)),
         };
 
         return @bitCast(dateTime);
@@ -862,27 +866,24 @@ const FR_INVALID_PARAMETER = error.InvalidParameter;
 
 fn ErrorSet(comptime options: []const anyerror) type {
     return struct {
-        pub const Error: type = @Type(.{
-            .error_set = blk: {
-                var names: [options.len]std.builtin.Type.Error = undefined;
-                for (&names, options) |*name, err| {
-                    name.* = .{ .name = @errorName(err) };
-                }
-                break :blk &names;
-            },
-        });
+        // Zig 0.17 removed `@Type`, and unlike structs/enums/unions there is no
+        // replacement builtin for synthesising an error set from names -- the
+        // full set is @Enum/@EnumLiteral/@FieldType/@Fn/@Frame/@Int/@Pointer/
+        // @SpirvType/@Struct/@This/@Tuple/@TypeOf/@Union/@Vector. Error sets can
+        // now only be written literally or composed with `||`, so this widens to
+        // the complete FatFs set. Callers get a superset of what `options` asked
+        // for: still sound, just less precise for exhaustive switches.
+        // `Overflow` is not a FatFs result code, but read/write raise it when a
+        // slice length does not fit c_uint, so it has to be in the set too.
+        pub const Error: type = GlobalError || error{Overflow};
 
         pub inline fn throw(error_code: c.FRESULT) Error!void {
-            const mapped_error = if (mapGenericError(error_code)) |_| {
-                return;
-            } else |err| err;
-
-            inline for (options) |error_option| {
-                if (mapped_error == error_option)
-                    return error_option; // must return the comptime known value for inference
-            }
-
-            std.debug.panic("unexpected error: {s}", .{@errorName(mapped_error)});
+            // With `Error` widened to the whole FatFs set, narrowing the mapped
+            // error down to `options` buys nothing -- and it cannot be done any
+            // more regardless: `options` elements are typed `anyerror`, which
+            // does not coerce to a concrete error set.
+            comptime std.debug.assert(options.len > 0);
+            return mapGenericError(error_code);
         }
     };
 }

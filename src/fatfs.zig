@@ -323,7 +323,13 @@ pub const Date = struct {
         const enc: Encoded = @bitCast(val);
         return Date{
             .year = 1980 + @as(u16, enc.years_from_1980),
-            .month = @as(std.time.epoch.Month, @enumFromInt(enc.month)),
+            // Clamped into the range `Month` can hold. A directory entry that
+            // was never stamped -- what a formatter with no clock leaves
+            // behind -- has fdate 0, whose month field is 0, and `@enumFromInt`
+            // of that is illegal behaviour: a panic in a safe build and a
+            // corrupt enum in a fast one. `day` stays as stored, so a caller
+            // can still recognise the unstamped entry by its zero day.
+            .month = @as(std.time.epoch.Month, @enumFromInt(std.math.clamp(enc.month, 1, 12))),
             .day = enc.day,
         };
     }
@@ -660,6 +666,18 @@ pub const api = struct {
     pub const setcp = c.f_setcp; // Set active code page
 };
 
+/// Where `get_fattime` gets the time, when the host has a clock to offer.
+///
+/// FatFs asks for the current date every time it writes a directory entry, and
+/// it asks through a C callback with no context pointer -- so a host with a
+/// clock (an OS kernel; not a bare `zig build` of this library) has no way to
+/// reach it from in there. This is that way: set it once at startup and every
+/// FAT timestamp comes from the host's clock instead of the fixed date below.
+///
+/// The callback returns *seconds since the Unix epoch*, in the local time the
+/// FAT entry should record. Left null, `get_fattime` behaves as it always did.
+pub var rtc_hook: ?*const fn () i64 = null;
+
 const RtcExport = struct {
     const Encoded = packed struct(c.DWORD) {
         /// bit[4:0]: Second / 2 (0..29, e.g. 25 for 50)
@@ -680,12 +698,17 @@ const RtcExport = struct {
 
     export fn get_fattime() c.DWORD {
         // `std.time.timestamp` is gone in 0.17; wall-clock time now comes from
-        // an Io clock, which this callback has no handle to. There is no RTC
-        // wired up on these boards anyway, so return a fixed date. It must be
-        // >= the FAT epoch (1980-01-01): the Unix epoch would make the
-        // `year - 1980` below underflow, since both are unsigned.
+        // an Io clock, which this callback has no handle to. A host that has a
+        // clock installs `rtc_hook`; without one there is no RTC to read, so
+        // fall back to a fixed date. It must be >= the FAT epoch (1980-01-01):
+        // the Unix epoch would make the `year - 1980` below underflow, since
+        // both are unsigned -- so a hook that answers earlier than 1980 is
+        // clamped up to it rather than trusted.
         const fat_epoch_unix_secs: i64 = 315_532_800; // 1980-01-01T00:00:00Z
-        const timestamp: i64 = fat_epoch_unix_secs;
+        const timestamp: i64 = if (rtc_hook) |hook|
+            @max(hook(), fat_epoch_unix_secs)
+        else
+            fat_epoch_unix_secs;
 
         const epoch_secs = std.time.epoch.EpochSeconds{
             .secs = @as(u64, @intCast(timestamp)),

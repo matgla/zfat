@@ -13,7 +13,7 @@ pub fn build(b: *std.Build) void {
     // options:
 
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+    const optimize = b.standardOptimizeOption(.{}) orelse .debug;
 
     const link_libc = !(b.option(bool, "no-libc", "Prevents linking of libc by default") orelse false);
 

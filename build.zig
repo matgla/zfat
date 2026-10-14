@@ -250,7 +250,7 @@ pub fn build(b: *std.Build) void {
     // Replaces the `@cImport` that used to sit at the top of src/fatfs.zig.
     const fatfs_headers = b.addTranslateC(.{
         .root_source_file = b.path("src/fatfs_c.h"),
-        .target = target,
+        .target = if (link_libc) target else freestandingHeaderTarget(b, target),
         .optimize = optimize,
         .link_libc = link_libc,
     });
@@ -476,3 +476,22 @@ const macro_names = struct {
     pub const timeout = "FF_FS_TIMEOUT";
     pub const sync_type = "FF_SYNC_t";
 };
+
+/// The target to translate C headers for when libc is not linked.
+///
+/// Since Zig 0.18, `translate-c` searches the host's /usr/include for any OS
+/// other than freestanding, even without -lc. A header that includes
+/// <stdint.h> then reaches the host libc through the builtin header's
+/// `#include_next`: on a host without 32-bit glibc headers (the CI image) the
+/// translation fails on gnu/stubs-32.h, and elsewhere it silently translates
+/// against host headers. Freestanding keeps the search to Zig's own builtin
+/// headers; the CPU, ABI and therefore every C type are unchanged.
+fn freestandingHeaderTarget(b: *std.Build, target: std.Build.ResolvedTarget) std.Build.ResolvedTarget {
+    var query = target.query;
+    query.os_tag = .freestanding;
+    query.os_version_min = null;
+    query.os_version_max = null;
+    query.glibc_version = null;
+    query.android_api_level = null;
+    return b.resolveTargetQuery(query);
+}
